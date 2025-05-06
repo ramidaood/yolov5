@@ -38,7 +38,7 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from models.common import DetectMultiBackend
 from utils.callbacks import Callbacks
-from utils.dataloaders import create_dataloader
+from utils.dataloaders import create_dataloader, create_custom_test_dataloader
 from utils.general import (
     LOGGER,
     TQDM_BAR_FORMAT,
@@ -193,7 +193,7 @@ def run(
     conf_thres=0.001,  # confidence threshold
     iou_thres=0.6,  # NMS IoU threshold
     max_det=300,  # maximum detections per image
-    task="val",  # train, val, test, speed or study
+    task="val",  # train, val, test, custom_test, speed or study
     device="",  # cuda device, i.e. 0 or 0,1,2,3 or cpu
     workers=8,  # max dataloader workers (per RANK in DDP mode)
     single_cls=False,  # treat as single-class dataset
@@ -214,6 +214,8 @@ def run(
     plots=True,
     callbacks=Callbacks(),
     compute_loss=None,
+    custom_test_images_dir=None,  # NEW: custom test images directory
+    custom_test_labels_dir=None,  # NEW: custom test labels directory
 ):
     """
     Evaluates a YOLOv5 model on a dataset and logs performance metrics.
@@ -249,6 +251,8 @@ def run(
         plots (bool, optional): Plot validation images and metrics. Default is True.
         callbacks (utils.callbacks.Callbacks, optional): Callbacks for logging and monitoring. Default is Callbacks().
         compute_loss (function, optional): Loss function for training. Default is None.
+        custom_test_images_dir (str, optional): Directory containing custom test images. Default is None.
+        custom_test_labels_dir (str, optional): Directory containing custom test labels. Default is None.
 
     Returns:
         dict: Contains performance metrics including precision, recall, mAP50, and mAP50-95.
@@ -300,18 +304,24 @@ def run(
             )
         model.warmup(imgsz=(1 if pt else batch_size, 3, imgsz, imgsz))  # warmup
         pad, rect = (0.0, False) if task == "speed" else (0.5, pt)  # square inference for benchmarks
-        task = task if task in ("train", "val", "test") else "val"  # path to train/val/test images
-        dataloader = create_dataloader(
-            data[task],
-            imgsz,
-            batch_size,
-            stride,
-            single_cls,
-            pad=pad,
-            rect=rect,
-            workers=workers,
-            prefix=colorstr(f"{task}: "),
-        )[0]
+        if task == "custom_test":
+            assert custom_test_images_dir is not None and custom_test_labels_dir is not None, "Custom test requires image and label directories."
+            dataloader, _ = create_custom_test_dataloader(
+                custom_test_images_dir, custom_test_labels_dir, img_size=imgsz, batch_size=batch_size, workers=workers
+            )
+        else:
+            task_ = task if task in ("train", "val", "test") else "val"
+            dataloader = create_dataloader(
+                data[task_],
+                imgsz,
+                batch_size,
+                stride,
+                single_cls,
+                pad=pad,
+                rect=rect,
+                workers=workers,
+                prefix=colorstr(f"{task_}: "),
+            )[0]
 
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
@@ -522,7 +532,7 @@ def parse_opt():
     parser.add_argument("--conf-thres", type=float, default=0.001, help="confidence threshold")
     parser.add_argument("--iou-thres", type=float, default=0.6, help="NMS IoU threshold")
     parser.add_argument("--max-det", type=int, default=300, help="maximum detections per image")
-    parser.add_argument("--task", default="val", help="train, val, test, speed or study")
+    parser.add_argument("--task", default="val", help="train, val, test, custom_test, speed or study")
     parser.add_argument("--device", default="", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
     parser.add_argument("--workers", type=int, default=8, help="max dataloader workers (per RANK in DDP mode)")
     parser.add_argument("--single-cls", action="store_true", help="treat as single-class dataset")
@@ -537,6 +547,8 @@ def parse_opt():
     parser.add_argument("--exist-ok", action="store_true", help="existing project/name ok, do not increment")
     parser.add_argument("--half", action="store_true", help="use FP16 half-precision inference")
     parser.add_argument("--dnn", action="store_true", help="use OpenCV DNN for ONNX inference")
+    parser.add_argument("--custom-test-images-dir", type=str, default=None, help="Custom test images directory (for custom_test task)")
+    parser.add_argument("--custom-test-labels-dir", type=str, default=None, help="Custom test labels directory (for custom_test task)")
     opt = parser.parse_args()
     opt.data = check_yaml(opt.data)  # check YAML
     opt.save_json |= opt.data.endswith("coco.yaml")
@@ -567,13 +579,12 @@ def main(opt):
     """
     check_requirements(ROOT / "requirements.txt", exclude=("tensorboard", "thop"))
 
-    if opt.task in ("train", "val", "test"):  # run normally
+    if opt.task in ("train", "val", "test", "custom_test"):  # run normally
         if opt.conf_thres > 0.001:  # https://github.com/ultralytics/yolov5/issues/1466
             LOGGER.info(f"WARNING ⚠️ confidence threshold {opt.conf_thres} > 0.001 produces invalid results")
         if opt.save_hybrid:
             LOGGER.info("WARNING ⚠️ --save-hybrid will return high mAP from hybrid labels, not from predictions alone")
         run(**vars(opt))
-
     else:
         weights = opt.weights if isinstance(opt.weights, list) else [opt.weights]
         opt.half = torch.cuda.is_available() and opt.device != "cpu"  # FP16 for fastest results
@@ -596,7 +607,7 @@ def main(opt):
             subprocess.run(["zip", "-r", "study.zip", "study_*.txt"])
             plot_val_study(x=x)  # plot
         else:
-            raise NotImplementedError(f'--task {opt.task} not in ("train", "val", "test", "speed", "study")')
+            raise NotImplementedError(f'--task {opt.task} not in ("train", "val", "test", "custom_test", "speed", "study")')
 
 
 if __name__ == "__main__":

@@ -722,7 +722,7 @@ class LoadImagesAndLabels(Dataset):
     def cache_labels(self, path=Path("./labels.cache"), prefix=""):
         """Caches dataset labels, verifies images, reads shapes, and tracks dataset integrity."""
         x = {}  # dict
-        nm, nf, ne, nc, msgs = 0, 0, 0, 0, []  # number missing, found, empty, corrupt, messages
+        nm, nf, ne, nc, msgs = 0, 0, 0, 0, []  # number (missing, found, empty, corrupt), message, segments
         desc = f"{prefix}Scanning {path.parent / path.stem}..."
         with Pool(NUM_THREADS) as pool:
             pbar = tqdm(
@@ -1377,3 +1377,38 @@ def create_classification_dataloader(
         worker_init_fn=seed_worker,
         generator=generator,
     )  # or DataLoader(persistent_workers=True)
+
+
+class CustomTestLoader(Dataset):
+    """Custom loader for testing: matches images and labels by filename from specified directories."""
+    def __init__(self, images_dir, labels_dir, img_size=640):
+        self.images_dir = Path(images_dir)
+        self.labels_dir = Path(labels_dir)
+        self.img_size = img_size
+        self.image_files = sorted([f for f in self.images_dir.glob('*') if f.suffix.lower() in IMG_FORMATS])
+        self.label_files = [self.labels_dir / (img.stem + '.txt') for img in self.image_files]
+        assert len(self.image_files) > 0, f"No images found in {images_dir}"
+
+    def __len__(self):
+        return len(self.image_files)
+
+    def __getitem__(self, idx):
+        # Load image
+        img_path = self.image_files[idx]
+        img = cv2.imread(str(img_path))
+        assert img is not None, f"Image not found: {img_path}"
+        img = letterbox(img, self.img_size, stride=32, auto=True)[0]
+        img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+        img = np.ascontiguousarray(img)
+        # Load label
+        label_path = self.label_files[idx]
+        if label_path.exists():
+            labels = np.loadtxt(str(label_path)).reshape(-1, 5) if label_path.stat().st_size > 0 else np.zeros((0, 5), dtype=np.float32)
+        else:
+            labels = np.zeros((0, 5), dtype=np.float32)
+        return torch.from_numpy(img), torch.from_numpy(labels), str(img_path), img.shape[1:]
+
+
+def create_custom_test_dataloader(images_dir, labels_dir, img_size=640, batch_size=16, workers=8):
+    dataset = CustomTestLoader(images_dir, labels_dir, img_size=img_size)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=workers), dataset
