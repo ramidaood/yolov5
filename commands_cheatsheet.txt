@@ -1,0 +1,59 @@
+# Train on full dataset (fast test)
+python yolov5/train.py \
+  --img 320 \
+  --batch 8 \
+  --epochs 4 \
+  --data datasets/mapillary/training/data.yaml \
+  --weights yolov5s.pt \
+  --project yolov5/runs/train \
+  --name exp_testing
+
+# Train on 500-image subset (fast test)
+python yolov5/train.py \
+  --img 320 \
+  --batch 8 \
+  --epochs 1 \
+  --data datasets/mapillary/training/data.yaml \
+  --weights yolov5s.pt \
+  --project yolov5/runs/train \
+  --name exp_fasttest_subset
+
+# Train on full dataset (real training example)
+python yolov5/train.py \
+  --img 640 \
+  --batch 16 \
+  --epochs 20 \
+  --data datasets/mapillary/training/data.yaml \
+  --weights yolov5s.pt \
+  --project yolov5/runs/train \
+  --name exp_full
+
+# Validate (evaluate) on test set with custom test dataloader
+python yolov5/val.py \
+  --task custom_test \
+  --weights yolov5/runs/train/exp13/weights/best.pt \
+  --imgsz 640 \
+  --batch-size 16 \
+  --data datasets/mapillary/training/data.yaml \
+  --custom-test-images-dir datasets/mapillary/training/images_test \
+  --custom-test-labels-dir datasets/mapillary/training/labels
+
+# Validate (evaluate) on val set (standard YOLOv5 validation)
+python yolov5/val.py \
+  --weights yolov5/runs/train/exp_full/weights/best.pt \
+  --data datasets/mapillary/training/data.yaml \
+  --imgsz 640 \
+  --batch-size 16
+
+# Run inference on a directory of images using your trained model
+# (change --source to your images directory)
+python yolov5/detect.py \
+  --weights yolov5/runs/train/exp_full/weights/best.pt \
+  --imgsz 640 \
+  --source datasets/mapillary/training/images_test
+
+# Run the subset creation script (for 500-image subset)
+python datasets/mapillary/training/make_subset.py
+
+# Fix validation labels (copy matching labels for images_test)
+python datasets/mapillary/training/fix_val_labels.py 

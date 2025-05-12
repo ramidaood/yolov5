@@ -1385,7 +1385,7 @@ class CustomTestLoader(Dataset):
         self.images_dir = Path(images_dir)
         self.labels_dir = Path(labels_dir)
         self.img_size = img_size
-        self.image_files = sorted([f for f in self.images_dir.glob('*') if f.suffix.lower() in IMG_FORMATS])
+        self.image_files = sorted([f for f in self.images_dir.glob('*') if f.suffix[1:].lower() in IMG_FORMATS])
         self.label_files = [self.labels_dir / (img.stem + '.txt') for img in self.image_files]
         assert len(self.image_files) > 0, f"No images found in {images_dir}"
 
@@ -1395,9 +1395,10 @@ class CustomTestLoader(Dataset):
     def __getitem__(self, idx):
         # Load image
         img_path = self.image_files[idx]
-        img = cv2.imread(str(img_path))
-        assert img is not None, f"Image not found: {img_path}"
-        img = letterbox(img, self.img_size, stride=32, auto=True)[0]
+        img0 = cv2.imread(str(img_path))
+        assert img0 is not None, f"Image not found: {img_path}"
+        h0, w0 = img0.shape[:2]
+        img = letterbox(img0, (self.img_size, self.img_size), stride=32, auto=False)[0]
         img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
         img = np.ascontiguousarray(img)
         # Load label
@@ -1406,9 +1407,21 @@ class CustomTestLoader(Dataset):
             labels = np.loadtxt(str(label_path)).reshape(-1, 5) if label_path.stat().st_size > 0 else np.zeros((0, 5), dtype=np.float32)
         else:
             labels = np.zeros((0, 5), dtype=np.float32)
-        return torch.from_numpy(img), torch.from_numpy(labels), str(img_path), img.shape[1:]
+        # Add image index as first column (as expected by YOLOv5)
+        labels_out = torch.zeros((labels.shape[0], 6), dtype=torch.float32)
+        if labels.shape[0]:
+            labels_out[:, 1:] = torch.from_numpy(labels)
+        # Return shapes in YOLOv5 format
+        shapes = ((h0, w0), ((self.img_size / h0, self.img_size / w0), (0, 0)))
+        return torch.from_numpy(img), labels_out, str(img_path), shapes
 
 
 def create_custom_test_dataloader(images_dir, labels_dir, img_size=640, batch_size=16, workers=8):
     dataset = CustomTestLoader(images_dir, labels_dir, img_size=img_size)
-    return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=workers), dataset
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=workers,
+        collate_fn=LoadImagesAndLabels.collate_fn  # Use YOLOv5's collate function
+    ), dataset
